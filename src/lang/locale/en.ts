@@ -202,6 +202,14 @@ const en = {
   'More options': 'More options',
   Cancel: 'Cancel',
   Done: 'Done',
+  Status: 'Status',
+  Pending: 'Pending',
+  'In Progress': 'In Progress',
+  Project: 'Project',
+  'All Projects': 'All Projects',
+  'Clear filters': 'Clear filters',
+  Clear: 'Clear',
+  All: 'All',
   Save: 'Save',
 
   // components/Item/ItemContent.tsx

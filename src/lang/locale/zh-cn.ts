@@ -191,6 +191,17 @@ const lang: Partial<Lang> = {
 
   // components/Editor/MarkdownEditor.tsx
   Submit: '提交',
+
+  // FilterToolbar.tsx
+  Status: '状态',
+  Pending: '未开始',
+  'In Progress': '进行中',
+  Done: '已完成',
+  Project: '项目',
+  'All Projects': '全部项目',
+  'Clear filters': '清除过滤器',
+  Clear: '清除',
+  All: '全部',
 };
 
 export default lang;

@@ -1,12 +1,13 @@
 import { EditorView } from '@codemirror/view';
 import { Dispatch, StateUpdater, useContext, useRef } from 'preact/hooks';
 import useOnclickOutside from 'react-cool-onclickoutside';
+import { moment } from 'obsidian';
 import { t } from 'src/lang/helpers';
 
 import { MarkdownEditor, allowNewLine } from '../Editor/MarkdownEditor';
 import { getDropAction } from '../Editor/helpers';
 import { KanbanContext } from '../context';
-import { c } from '../helpers';
+import { c, escapeRegExpStr } from '../helpers';
 import { EditState, EditingState, Item, isEditing } from '../types';
 
 interface ItemFormProps {
@@ -26,7 +27,58 @@ export function ItemForm({ addItems, editState, setEditState, hideButton }: Item
   });
 
   const createItem = (title: string) => {
-    addItems([stateManager.getNewItem(title, ' ')]);
+    // 自动添加当前日期和时间
+    const trimmedTitle = title.trim();
+    let finalTitle = trimmedTitle;
+    
+    // 获取日期和时间触发器
+    const dateTrigger = stateManager.getSetting('date-trigger') || '@';
+    const timeTrigger = stateManager.getSetting('time-trigger') || '@@';
+    const dateFormat = stateManager.getSetting('date-format') || 'YYYY-MM-DD';
+    const timeFormat = stateManager.getSetting('time-format') || 'HH:mm';
+    
+    // 转义触发器用于正则表达式
+    const escapedDateTrigger = escapeRegExpStr(dateTrigger);
+    const escapedTimeTrigger = escapeRegExpStr(timeTrigger);
+    
+    // 检查是否已经包含日期和时间（避免重复添加）
+    const datePattern = new RegExp(
+      `${escapedDateTrigger}(?:\\[\\[([^\\]]+)\\]\\]|\\{([^}]+)\\})`
+    );
+    const timePattern = new RegExp(
+      `${escapedTimeTrigger}\\{([^}]+)\\}`
+    );
+    
+    const hasDate = datePattern.test(trimmedTitle);
+    const hasTime = timePattern.test(trimmedTitle);
+    
+    // 如果标题中还没有日期或时间，则添加
+    if (!hasDate || !hasTime) {
+      const currentTime = moment();
+      const parts: string[] = [];
+      
+      // 添加日期（如果还没有）
+      if (!hasDate) {
+        const formattedDate = currentTime.format(dateFormat);
+        // 使用日期链接格式 @[[YYYY-MM-DD]]
+        parts.push(`${dateTrigger}[[${formattedDate}]]`);
+      }
+      
+      // 添加时间（如果还没有）
+      if (!hasTime) {
+        const formattedTime = currentTime.format(timeFormat);
+        parts.push(`${timeTrigger}{${formattedTime}}`);
+      }
+      
+      // 在标题末尾添加日期和时间
+      if (parts.length > 0) {
+        finalTitle = trimmedTitle
+          ? `${trimmedTitle} ${parts.join(' ')}`
+          : parts.join(' ');
+      }
+    }
+    
+    addItems([stateManager.getNewItem(finalTitle, ' ')]);
     const cm = editorRef.current;
     if (cm) {
       cm.dispatch({

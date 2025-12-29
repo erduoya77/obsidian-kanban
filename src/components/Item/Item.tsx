@@ -192,10 +192,21 @@ export const Items = memo(function Items({ isStatic, items, shouldMarkItemsCompl
   const { view } = useContext(KanbanContext);
   const boardView = view.useViewState(frontmatterKey);
 
+  // 如果有任何过滤条件（搜索、状态过滤、项目过滤），则使用 search.items 来过滤
+  const hasAnyFilter = search && (
+    search.query ||
+    search.statusFilter !== 'all' ||
+    search.projectFilters.size > 0
+  );
+
   return (
     <>
       {items.map((item, i) => {
-        return search?.query && !search.items.has(item) ? null : (
+        // 如果有过滤条件，检查 item 是否在匹配列表中
+        if (hasAnyFilter && !search.items.has(item)) {
+          return null;
+        }
+        return (
           <DraggableItem
             key={boardView + item.id}
             item={item}

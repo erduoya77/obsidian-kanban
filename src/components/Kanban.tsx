@@ -14,13 +14,16 @@ import { t } from 'src/lang/helpers';
 import { DndScope } from '../dnd/components/Scope';
 import { getBoardModifiers } from '../helpers/boardModifiers';
 import { frontmatterKey } from '../parsers/common';
+import { getTaskStatusDone } from '../parsers/helpers/inlineMetadata';
+import { Path } from '../dnd/types';
+import { FilterToolbar } from './FilterToolbar';
 import { Icon } from './Icon/Icon';
 import { Lanes } from './Lane/Lane';
 import { LaneForm } from './Lane/LaneForm';
 import { TableView } from './Table/Table';
 import { KanbanContext, SearchContext } from './context';
 import { baseClassName, c, useSearchValue } from './helpers';
-import { DataTypes } from './types';
+import { DataTypes, Item, Lane, LaneTemplate } from './types';
 
 const boardScrollTiggers = [DataTypes.Item, DataTypes.Lane];
 const boardAccepts = [DataTypes.Lane];
@@ -55,6 +58,8 @@ export const Kanban = ({ view, stateManager }: KanbanProps) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'in-progress' | 'done'>('all');
+  const [projectFilters, setProjectFilters] = useState<Set<string>>(new Set());
 
   const [isLaneFormVisible, setIsLaneFormVisible] = useState<boolean>(
     boardData?.children.length === 0
@@ -163,9 +168,287 @@ export const Kanban = ({ view, stateManager }: KanbanProps) => {
     }
   }, [boardData?.data.archive.length, maxArchiveLength]);
 
+  const html5DragHandlers = createHTMLDndHandlers(stateManager);
+
+  const doneChar = getTaskStatusDone();
+
+  // 当有项目筛选时，重新组织数据为状态列
+  const getFilteredBoardData = useMemo(() => {
+    if (projectFilters.size === 0) {
+      return boardData;
+    }
+
+    // 使用Map来高效分组
+    const statusGroups = new Map<string, Item[]>([
+      ['pending', []],
+      ['in-progress', []],
+      ['done', []]
+    ]);
+
+    // 收集所有选中项目的卡片并分组
+    boardData.children.forEach((lane) => {
+      if (projectFilters.has(lane.data.title)) {
+        lane.children.forEach((item) => {
+          const checkChar = item.data.checkChar;
+          if (checkChar === ' ') {
+            statusGroups.get('pending')!.push(item);
+          } else if (checkChar === '/') {
+            statusGroups.get('in-progress')!.push(item);
+          } else if (checkChar === doneChar) {
+            statusGroups.get('done')!.push(item);
+          }
+        });
+      }
+    });
+
+    // 创建新的lanes
+    const statusLanes: Lane[] = [
+      {
+        ...LaneTemplate,
+        id: 'filtered-pending',
+        children: statusGroups.get('pending')!,
+        data: {
+          title: t('Pending'),
+          shouldMarkItemsComplete: false,
+        },
+      },
+      {
+        ...LaneTemplate,
+        id: 'filtered-in-progress',
+        children: statusGroups.get('in-progress')!,
+        data: {
+          title: t('In Progress'),
+          shouldMarkItemsComplete: false,
+        },
+      },
+      {
+        ...LaneTemplate,
+        id: 'filtered-done',
+        children: statusGroups.get('done')!,
+        data: {
+          title: t('Done'),
+          shouldMarkItemsComplete: false,
+        },
+      },
+    ];
+
+    return {
+      ...boardData,
+      children: statusLanes,
+    };
+  }, [boardData, projectFilters, doneChar]);
+
   const boardModifiers = useMemo(() => {
-    return getBoardModifiers(view, stateManager);
-  }, [stateManager, view]);
+    const baseModifiers = getBoardModifiers(view, stateManager);
+
+    // 如果有项目筛选，创建包装的modifiers来处理路径映射
+    if (projectFilters.size > 0) {
+      return {
+        ...baseModifiers,
+        updateItem: (path: Path, item: Item) => {
+          // 在项目视图模式下，需要将操作映射回原始的lane
+          if (path.length >= 2 && typeof path[0] === 'number') {
+            const filteredLaneIndex = path[0] as number;
+            const itemIndex = path[1] as number;
+
+            // 根据filtered lane的ID找到对应的状态
+            const filteredLane = getFilteredBoardData.children[filteredLaneIndex];
+            if (filteredLane && filteredLane.id.startsWith('filtered-')) {
+              const statusType = filteredLane.id.replace('filtered-', '');
+              const statusChar = statusType === 'pending' ? ' ' : statusType === 'in-progress' ? '/' : doneChar;
+
+              // 找到原始项目中对应的item，并更新其状态
+              let found = false;
+              boardData.children.forEach((originalLane, laneIdx) => {
+                if (projectFilters.has(originalLane.data.title)) {
+                  originalLane.children.forEach((originalItem, itemIdx) => {
+                    if (originalItem.id === item.id) {
+                      // 更新原始item的状态
+                      const updatedItem = update(originalItem, {
+                        data: {
+                          checkChar: { $set: statusChar },
+                          checked: { $set: statusChar === doneChar }
+                        }
+                      });
+                      baseModifiers.updateItem([laneIdx, itemIdx], updatedItem);
+                      found = true;
+                    }
+                  });
+                }
+              });
+
+              if (found) return;
+            }
+          }
+
+          // 回退到默认行为
+          baseModifiers.updateItem(path, item);
+        },
+
+        deleteEntity: (path: Path) => {
+          // 在项目视图模式下，删除操作也需要映射回原始lane
+          if (path.length >= 2 && typeof path[0] === 'number') {
+            const filteredLaneIndex = path[0] as number;
+            const itemIndex = path[1] as number;
+
+            const filteredLane = getFilteredBoardData.children[filteredLaneIndex];
+            if (filteredLane && filteredLane.id.startsWith('filtered-')) {
+              // 找到原始项目中对应的item并删除
+              boardData.children.forEach((originalLane, laneIdx) => {
+                if (projectFilters.has(originalLane.data.title)) {
+                  originalLane.children.forEach((originalItem, itemIdx) => {
+                    if (originalItem.id === filteredLane.children[itemIndex]?.id) {
+                      baseModifiers.deleteEntity([laneIdx, itemIdx]);
+                      return;
+                    }
+                  });
+                }
+              });
+              return;
+            }
+          }
+
+          // 回退到默认行为
+          baseModifiers.deleteEntity(path);
+        },
+
+        appendItems: (path: Path, items: Item[]) => {
+          // 在项目视图模式下，插入操作也需要映射回原始lane
+          if (path.length >= 1 && typeof path[0] === 'number') {
+            const filteredLaneIndex = path[0] as number;
+
+            const filteredLane = getFilteredBoardData.children[filteredLaneIndex];
+            if (filteredLane && filteredLane.id.startsWith('filtered-')) {
+              // 为新items设置正确的状态
+              const statusType = filteredLane.id.replace('filtered-', '');
+              const statusChar = statusType === 'pending' ? ' ' : statusType === 'in-progress' ? '/' : doneChar;
+
+              const updatedItems = items.map(item => update(item, {
+                data: {
+                  checkChar: { $set: statusChar },
+                  checked: { $set: statusChar === doneChar }
+                }
+              }));
+
+              // 获取唯一选中的项目（每次只能选中一个项目）
+              const selectedProjects = Array.from(projectFilters);
+              if (selectedProjects.length === 1) {
+                const selectedProject = selectedProjects[0];
+
+                // 找到对应的原始lane
+                for (let i = 0; i < boardData.children.length; i++) {
+                  const originalLane = boardData.children[i];
+                  if (originalLane.data.title.trim() === selectedProject.trim()) {
+                    baseModifiers.appendItems([i, originalLane.children.length], updatedItems);
+                    return;
+                  }
+                }
+                // 如果没有找到匹配的lane，不插入以避免错误位置
+                return;
+              }
+            }
+          }
+
+          // 回退到默认行为
+          baseModifiers.appendItems(path, items);
+        },
+
+        prependItems: (path: Path, items: Item[]) => {
+          // 在项目视图模式下，插入操作也需要映射回原始lane
+          if (path.length >= 1 && typeof path[0] === 'number') {
+            const filteredLaneIndex = path[0] as number;
+
+            const filteredLane = getFilteredBoardData.children[filteredLaneIndex];
+            if (filteredLane && filteredLane.id.startsWith('filtered-')) {
+              // 为新items设置正确的状态
+              const statusType = filteredLane.id.replace('filtered-', '');
+              const statusChar = statusType === 'pending' ? ' ' : statusType === 'in-progress' ? '/' : doneChar;
+
+              const updatedItems = items.map(item => update(item, {
+                data: {
+                  checkChar: { $set: statusChar },
+                  checked: { $set: statusChar === doneChar }
+                }
+              }));
+
+              // 获取唯一选中的项目（每次只能选中一个项目）
+              const selectedProjects = Array.from(projectFilters);
+              if (selectedProjects.length === 1) {
+                const selectedProject = selectedProjects[0];
+
+                // 找到对应的原始lane
+                for (let i = 0; i < boardData.children.length; i++) {
+                  const originalLane = boardData.children[i];
+                  if (originalLane.data.title.trim() === selectedProject.trim()) {
+                    baseModifiers.prependItems([i, 0], updatedItems);
+                    return;
+                  }
+                }
+                // 如果没有找到匹配的lane，不插入以避免错误位置
+                return;
+              }
+            }
+          }
+
+          // 回退到默认行为
+          baseModifiers.prependItems(path, items);
+        },
+
+        insertItems: (path: Path, items: Item[]) => {
+          console.log('insertItems called with path:', path, 'projectFilters size:', projectFilters.size);
+          // 在项目视图模式下，插入操作也需要映射回原始lane
+          if (path.length >= 1 && typeof path[0] === 'number') {
+            const filteredLaneIndex = path[0] as number;
+
+            const filteredLane = getFilteredBoardData.children[filteredLaneIndex];
+            console.log('filteredLane id:', filteredLane?.id);
+            if (filteredLane && filteredLane.id.startsWith('filtered-')) {
+              console.log('In project view mode');
+              // 为新items设置正确的状态
+              const statusType = filteredLane.id.replace('filtered-', '');
+              const statusChar = statusType === 'pending' ? ' ' : statusType === 'in-progress' ? '/' : doneChar;
+
+              const updatedItems = items.map(item => update(item, {
+                data: {
+                  checkChar: { $set: statusChar },
+                  checked: { $set: statusChar === doneChar }
+                }
+              }));
+
+              // 获取唯一选中的项目（每次只能选中一个项目）
+              const selectedProjects = Array.from(projectFilters);
+              console.log('selectedProjects:', selectedProjects);
+              if (selectedProjects.length === 1) {
+                const selectedProject = selectedProjects[0];
+                console.log('Selected project for insertion:', selectedProject);
+
+                // 找到对应的原始lane
+                for (let i = 0; i < boardData.children.length; i++) {
+                  const originalLane = boardData.children[i];
+                  if (originalLane.data.title.trim() === selectedProject.trim()) {
+                    console.log('Inserting to lane:', i, 'title:', originalLane.data.title);
+                    baseModifiers.insertItems([i, originalLane.children.length], updatedItems);
+                    return;
+                  }
+                }
+                console.log('No matching lane found for project:', selectedProject);
+                // 如果没有找到匹配的lane，不插入以避免错误位置
+                return;
+              } else {
+                console.log('selectedProjects length not 1');
+              }
+            }
+          }
+
+          // 回退到默认行为
+          console.log('Falling back to default insert');
+          baseModifiers.insertItems(path, items);
+        }
+      };
+    }
+
+    return baseModifiers;
+  }, [view, stateManager, projectFilters, getFilteredBoardData, boardData, doneChar]);
 
   const kanbanContext = useMemo(() => {
     return {
@@ -175,8 +458,6 @@ export const Kanban = ({ view, stateManager }: KanbanProps) => {
       filePath,
     };
   }, [view, stateManager, boardModifiers, filePath, dateColors, tagColors]);
-
-  const html5DragHandlers = createHTMLDndHandlers(stateManager);
 
   if (boardData === null || boardData === undefined)
     return (
@@ -203,11 +484,15 @@ export const Kanban = ({ view, stateManager }: KanbanProps) => {
 
   const axis = boardView === 'list' ? 'vertical' : 'horizontal';
   const searchValue = useSearchValue(
-    boardData,
+    getFilteredBoardData,
     debouncedSearchQuery,
     setSearchQuery,
     setDebouncedSearchQuery,
-    setIsSearching
+    setIsSearching,
+    statusFilter,
+    setStatusFilter,
+    projectFilters,
+    setProjectFilters
   );
 
   return (
@@ -228,6 +513,15 @@ export const Kanban = ({ view, stateManager }: KanbanProps) => {
             {(isLaneFormVisible || boardData.children.length === 0) && (
               <LaneForm onNewLane={onNewLane} closeLaneForm={closeLaneForm} />
             )}
+            {/* 过滤器工具栏 - 始终显示在左上角 */}
+            <FilterToolbar
+              stateManager={stateManager}
+              boardData={getFilteredBoardData}
+              statusFilter={statusFilter}
+              setStatusFilter={setStatusFilter}
+              projectFilters={projectFilters}
+              searchValue={searchValue}
+            />
             {isSearching && (
               <div className={c('search-wrapper')}>
                 <input
@@ -262,7 +556,7 @@ export const Kanban = ({ view, stateManager }: KanbanProps) => {
               </div>
             )}
             {boardView === 'table' ? (
-              <TableView boardData={boardData} stateManager={stateManager} />
+              <TableView boardData={getFilteredBoardData} stateManager={stateManager} />
             ) : (
               <ScrollContainer
                 id={view.id}
@@ -278,11 +572,11 @@ export const Kanban = ({ view, stateManager }: KanbanProps) => {
               >
                 <div>
                   <Sortable axis={axis}>
-                    <Lanes lanes={boardData.children} collapseDir={axis} />
+                    <Lanes lanes={getFilteredBoardData.children} collapseDir={axis} />
                     <SortPlaceholder
                       accepts={boardAccepts}
                       className={c('lane-placeholder')}
-                      index={boardData.children.length}
+                      index={getFilteredBoardData.children.length}
                     />
                   </Sortable>
                 </div>
