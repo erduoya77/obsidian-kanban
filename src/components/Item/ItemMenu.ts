@@ -68,9 +68,13 @@ export function useItemMenu({
               const newNoteFolder = stateManager.getSetting('new-note-folder');
               const newNoteTemplatePath = stateManager.getSetting('new-note-template');
 
+              // 获取文件路径，兼容 ProjectStateManager（虚拟文件）
+              const filePath = stateManager.file?.path || '';
               const targetFolder = newNoteFolder
                 ? (stateManager.app.vault.getAbstractFileByPath(newNoteFolder as string) as TFolder)
-                : stateManager.app.fileManager.getNewFileParent(stateManager.file.path);
+                : filePath 
+                  ? stateManager.app.fileManager.getNewFileParent(filePath)
+                  : stateManager.app.fileManager.getNewFileParent('');
 
               const newFile = (await (stateManager.app.fileManager as any).createNewMarkdownFile(
                 targetFolder,
@@ -87,7 +91,7 @@ export function useItemMenu({
 
               const newTitleRaw = item.data.titleRaw.replace(
                 prevTitle,
-                stateManager.app.fileManager.generateMarkdownLink(newFile, stateManager.file.path)
+                stateManager.app.fileManager.generateMarkdownLink(newFile, stateManager.file?.path || '')
               );
 
               boardModifiers.updateItem(path, stateManager.updateItemContent(item, newTitleRaw));

@@ -423,13 +423,17 @@ export class ProjectStateManager {
         // 检查 lane.children 是否存在
         const laneChildren = lane.children && Array.isArray(lane.children) ? lane.children : [];
         
-        // 创建新的 lane，标题包含项目名称
+        // 文件名就是项目名，不需要在标题前添加项目名称
+        // 保持原始标题不变
+        const originalTitle = lane.data?.title || 'Untitled';
+        
+        // 创建新的 lane，保持原始标题
         const aggregatedLane: Lane = {
           ...LaneTemplate,
           id: `${filePath}:::${lane.id || `lane-${laneIndex}`}`,
           data: {
             ...lane.data,
-            title: `${projectName} - ${lane.data?.title || 'Untitled'}`,
+            title: originalTitle,
           },
           children: laneChildren.map((item) => {
             // 检查 item 是否存在
@@ -532,15 +536,34 @@ export class ProjectStateManager {
   setState(updater: Board | ((board: Board) => Board), shouldSave: boolean = true) {
     const newBoard = typeof updater === 'function' ? updater(this.aggregatedBoard) : updater;
     
+    // 验证 board 结构
+    if (!newBoard || !newBoard.children || !Array.isArray(newBoard.children)) {
+      console.error('Invalid board structure in setState:', newBoard);
+      return;
+    }
+    
     // 更新聚合看板
     this.aggregatedBoard = newBoard;
     
-    // 通知所有接收者
-    this.stateReceivers.forEach((receiver) => receiver(this.aggregatedBoard));
+    // 通知所有接收者（使用防抖避免频繁更新）
+    if (this.stateReceivers.length > 0) {
+      // 使用 requestAnimationFrame 延迟通知，避免在同步过程中触发更新
+      requestAnimationFrame(() => {
+        this.stateReceivers.forEach((receiver) => {
+          try {
+            receiver(this.aggregatedBoard);
+          } catch (e) {
+            console.error('Error in state receiver:', e);
+          }
+        });
+      });
+    }
 
     if (shouldSave) {
-      // 将更改同步回各个项目文件
-      this.syncToProjectFiles(newBoard);
+      // 异步保存，避免阻塞
+      this.syncToProjectFiles(newBoard).catch((e) => {
+        console.error('Error syncing to project files:', e);
+      });
     }
   }
 
@@ -548,10 +571,20 @@ export class ProjectStateManager {
    * 将聚合看板的更改同步回各个项目文件
    */
   async syncToProjectFiles(aggregatedBoard: Board) {
+    // 验证 board 结构
+    if (!aggregatedBoard || !aggregatedBoard.children || !Array.isArray(aggregatedBoard.children)) {
+      console.error('Invalid board structure in syncToProjectFiles:', aggregatedBoard);
+      return;
+    }
+    
     // 按项目文件分组 lanes
     const projectLanesMap = new Map<string, { lane: Lane; aggregatedIndex: number }[]>();
 
     aggregatedBoard.children.forEach((aggregatedLane, index) => {
+      if (!aggregatedLane || !aggregatedLane.id) {
+        console.warn('Invalid lane at index', index);
+        return;
+      }
       const parts = aggregatedLane.id.split(':::');
       if (parts.length >= 2) {
         const filePath = parts[0];

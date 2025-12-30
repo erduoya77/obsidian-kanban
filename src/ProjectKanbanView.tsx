@@ -158,15 +158,42 @@ export class ProjectKanbanView extends ItemView implements HoverParent {
   async onOpen() {
     console.log('🔍 [DEBUG] ProjectKanbanView.onOpen: 开始');
     
-    // 订阅状态变化
-    this.projectStateManager.stateReceivers.push((board: Board) => {
+    // 订阅状态变化 - 使用防抖避免频繁渲染
+    let renderTimeout: number | null = null;
+    let isRendering = false;
+    
+    const stateUpdateHandler = (board: Board) => {
+      // 如果正在渲染，跳过这次更新
+      if (isRendering) {
+        return;
+      }
+      
       console.log('🔍 [DEBUG] ProjectKanbanView.onOpen: 收到状态更新', {
         boardChildren: board?.children?.length || 0,
       });
-      this.validatePreviewCache(board);
-      this.prerender(board);
-      this.renderPortal();
-    });
+      
+      // 清除之前的定时器
+      if (renderTimeout !== null) {
+        clearTimeout(renderTimeout);
+      }
+      
+      // 延迟渲染，避免频繁更新
+      renderTimeout = window.setTimeout(() => {
+        isRendering = true;
+        try {
+          this.validatePreviewCache(board);
+          this.prerender(board);
+          this.renderPortal();
+        } catch (e) {
+          console.error('Error in stateUpdateHandler:', e);
+        } finally {
+          isRendering = false;
+          renderTimeout = null;
+        }
+      }, 100); // 增加延迟时间到 100ms
+    };
+    
+    this.projectStateManager.stateReceivers.push(stateUpdateHandler);
 
     // 确保项目文件扫描完成
     console.log('🔍 [DEBUG] ProjectKanbanView.onOpen: 等待项目文件扫描完成');
@@ -206,23 +233,49 @@ export class ProjectKanbanView extends ItemView implements HoverParent {
     
     // 创建拖拽处理函数
     const handleDrop = (dragEntity: any, dropEntity: any) => {
-      if (!dragEntity || !dropEntity) return;
+      if (!dragEntity || !dropEntity) {
+        console.log('🔍 [DEBUG] handleDrop: dragEntity 或 dropEntity 为空');
+        return;
+      }
       
       const dragPath = dragEntity.getPath();
       const dropPath = dropEntity.getPath();
-      const dragEntityData = dragEntity.getData();
-      const dropEntityData = dropEntity.getData();
+      
+      console.log('🔍 [DEBUG] handleDrop: 拖拽路径', {
+        dragPath,
+        dropPath,
+        dragType: dragEntity.getData()?.type,
+        dropType: dropEntity.getData()?.type,
+      });
       
       // 检查是否在同一项目文件内（通过 lane ID 判断）
       const board = this.projectStateManager.getBoard();
-      const dragLane = board.children[dragPath[0] as number];
-      const dropLane = board.children[dropPath[0] as number];
       
-      if (!dragLane || !dropLane) return;
+      // 获取拖拽源和目标所在的 lane
+      const dragLaneIndex = dragPath[0] as number;
+      const dropLaneIndex = dropPath[0] as number;
+      const dragLane = board.children[dragLaneIndex];
+      const dropLane = board.children[dropLaneIndex];
+      
+      if (!dragLane || !dropLane) {
+        console.warn('🔍 [DEBUG] handleDrop: lane 不存在', {
+          dragLaneIndex,
+          dropLaneIndex,
+          hasDragLane: !!dragLane,
+          hasDropLane: !!dropLane,
+        });
+        return;
+      }
       
       // 提取项目文件路径
       const dragProject = dragLane.id.split(':::')[0];
       const dropProject = dropLane.id.split(':::')[0];
+      
+      console.log('🔍 [DEBUG] handleDrop: 项目检查', {
+        dragProject,
+        dropProject,
+        isSameProject: dragProject === dropProject,
+      });
       
       // 只允许在同一项目文件内拖拽
       if (dragProject !== dropProject) {
@@ -234,11 +287,17 @@ export class ProjectKanbanView extends ItemView implements HoverParent {
       const boardModifiers = getProjectBoardModifiers(this, this.projectStateManager);
       
       // 执行移动操作
+      console.log('🔍 [DEBUG] handleDrop: 执行移动操作');
       this.projectStateManager.setState((boardData) => {
         const entity = getEntityFromPath(boardData, dragPath);
+        if (!entity) {
+          console.warn('🔍 [DEBUG] handleDrop: 无法找到拖拽实体');
+          return boardData;
+        }
         const newBoard = moveEntity(boardData, dragPath, dropPath);
+        console.log('🔍 [DEBUG] handleDrop: 移动完成');
         return newBoard;
-      });
+      }, true); // 确保保存到文件
     };
     
     // 包裹在 DndContext 中以支持拖拽

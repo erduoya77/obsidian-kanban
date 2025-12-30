@@ -67,15 +67,33 @@ export function getProjectBoardModifiers(
 
   return {
     appendItems: (path: Path, items: Item[]) => {
-      stateManager.setState((boardData) => appendEntities(boardData, path, items));
+      stateManager.setState((boardData) => {
+        if (!boardData || !boardData.children || !Array.isArray(boardData.children)) {
+          console.error('Invalid boardData in appendItems:', boardData);
+          return boardData;
+        }
+        return appendEntities(boardData, path, items);
+      });
     },
 
     prependItems: (path: Path, items: Item[]) => {
-      stateManager.setState((boardData) => prependEntities(boardData, path, items));
+      stateManager.setState((boardData) => {
+        if (!boardData || !boardData.children || !Array.isArray(boardData.children)) {
+          console.error('Invalid boardData in prependItems:', boardData);
+          return boardData;
+        }
+        return prependEntities(boardData, path, items);
+      });
     },
 
     insertItems: (path: Path, items: Item[]) => {
-      stateManager.setState((boardData) => insertEntity(boardData, path, items));
+      stateManager.setState((boardData) => {
+        if (!boardData || !boardData.children || !Array.isArray(boardData.children)) {
+          console.error('Invalid boardData in insertItems:', boardData);
+          return boardData;
+        }
+        return insertEntity(boardData, path, items);
+      });
     },
 
     replaceItem: (path: Path, items: Item[]) => {
