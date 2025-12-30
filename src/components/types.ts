@@ -87,6 +87,10 @@ export interface ItemData {
   titleSearchRaw: string;
   metadata: ItemMetadata;
   forceEditMode?: boolean;
+  // 项目聚合视图相关字段
+  projectFile?: TFile;
+  projectLaneId?: string;
+  projectItemId?: string;
 }
 
 export interface ErrorReport {

@@ -3,7 +3,10 @@
 const en = {
   // main.ts
   'Open as kanban board': 'Open as kanban board',
+  'Open projects kanban': 'Open projects kanban',
   'Create new board': 'Create new board',
+  'Create new project board': 'Create new project board',
+  'New project board': 'New project board',
   'Archive completed cards in active board': 'Archive completed cards in active board',
   'Error: current file is not a Kanban board': 'Error: current file is not a Kanban board',
   'Convert empty note to Kanban': 'Convert empty note to Kanban',
@@ -11,6 +14,9 @@ const en = {
     'Error: cannot create Kanban, the current note is not empty',
   'New kanban board': 'New kanban board',
   'Untitled Kanban': 'Untitled Kanban',
+  'Untitled Project': 'Untitled Project',
+  'Projects Kanban': 'Projects Kanban',
+  'Refresh projects': 'Refresh projects',
   'Toggle between Kanban and markdown mode': 'Toggle between Kanban and markdown mode',
 
   'View as board': 'View as board',
@@ -202,6 +208,14 @@ const en = {
   'More options': 'More options',
   Cancel: 'Cancel',
   Done: 'Done',
+  Status: 'Status',
+  Pending: 'Pending',
+  'In Progress': 'In Progress',
+  Project: 'Project',
+  'All Projects': 'All Projects',
+  'Clear filters': 'Clear filters',
+  Clear: 'Clear',
+  All: 'All',
   Save: 'Save',
 
   // components/Item/ItemContent.tsx

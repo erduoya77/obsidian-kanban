@@ -1,5 +1,6 @@
 import { Keymap, Menu } from 'obsidian';
 import { KanbanView } from 'src/KanbanView';
+import { ProjectKanbanView } from 'src/ProjectKanbanView';
 
 const noBreakSpace = /\u00A0/g;
 
@@ -37,7 +38,7 @@ export function applyCheckboxIndexes(dom: HTMLElement) {
   });
 }
 
-export function bindMarkdownEvents(view: KanbanView) {
+export function bindMarkdownEvents(view: KanbanView | ProjectKanbanView) {
   const { contentEl, app } = view;
 
   const parseLink = (el: HTMLElement) => {
@@ -57,7 +58,9 @@ export function bindMarkdownEvents(view: KanbanView) {
     if (!link) return;
 
     evt.preventDefault();
-    app.workspace.openLinkText(link.href, view.file.path, Keymap.isModEvent(evt));
+    // 检查 view.file 是否存在（兼容 ProjectKanbanView）
+    const filePath = view.file?.path || (view as any).virtualFile?.path || '';
+    app.workspace.openLinkText(link.href, filePath, Keymap.isModEvent(evt));
   };
 
   contentEl.on('click', 'a.internal-link', onLinkClick);

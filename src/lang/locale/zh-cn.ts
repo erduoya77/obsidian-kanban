@@ -4,7 +4,10 @@ import { Lang } from './en';
 const lang: Partial<Lang> = {
   // main.ts
   'Open as kanban board': '打开为看板',
+  'Open projects kanban': '打开项目看板',
   'Create new board': '创建新看板',
+  'Create new project board': '创建新项目看板',
+  'New project board': '新项目看板',
   'Archive completed cards in active board': '在当前看板中归档已完成卡片',
   'Error: current file is not a Kanban board': '错误：当前文件不是看板文件',
   'Convert empty note to Kanban': '转换空白笔记为看板',
@@ -12,6 +15,9 @@ const lang: Partial<Lang> = {
     '错误：无法转换当前文件，当前笔记不是空白笔记',
   'New kanban board': '新看板',
   'Untitled Kanban': '未命名看板',
+  'Untitled Project': '未命名项目',
+  'Projects Kanban': '项目看板',
+  'Refresh projects': '刷新项目',
   'Toggle between Kanban and markdown mode': '在看板和 Markdown 模式之间进行切换',
 
   // KanbanView.tsx
@@ -191,6 +197,17 @@ const lang: Partial<Lang> = {
 
   // components/Editor/MarkdownEditor.tsx
   Submit: '提交',
+
+  // FilterToolbar.tsx
+  Status: '状态',
+  Pending: '未开始',
+  'In Progress': '进行中',
+  Done: '已完成',
+  Project: '项目',
+  'All Projects': '全部项目',
+  'Clear filters': '清除过滤器',
+  Clear: '清除',
+  All: '全部',
 };
 
 export default lang;

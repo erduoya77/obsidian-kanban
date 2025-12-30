@@ -88,11 +88,14 @@ export class BasicMarkdownRenderer extends Component {
   async render() {
     this.containerEl.empty();
 
+    // 检查 view.file 是否存在（兼容 ProjectKanbanView）
+    const filePath = this.view.file?.path || this.view.getDisplayText() || '';
+
     await ObsidianRenderer.render(
       this.view.app,
       this.markdown,
       this.containerEl,
-      this.view.file.path,
+      filePath,
       this
     );
 
@@ -200,6 +203,12 @@ export class BasicMarkdownRenderer extends Component {
 
   resolveLinks() {
     const { containerEl, view } = this;
+    
+    // 检查 view.file 是否存在（兼容 ProjectKanbanView）
+    if (!view.file) {
+      return;
+    }
+    
     const internalLinkEls = containerEl.findAll('a.internal-link');
     for (const internalLinkEl of internalLinkEls) {
       const href = this.getInternalLinkHref(internalLinkEl);

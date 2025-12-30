@@ -10,7 +10,7 @@ import {
   getTaskStatusDone,
   getTaskStatusPreDone,
   toggleTask,
-} from 'src/parsers/helpers/inlineMetadata';
+} from '../parsers/helpers/inlineMetadata';
 
 import { SearchContextProps } from './context';
 import { Board, DataKey, DateColor, Item, Lane, PageData, TagColor } from './types';
@@ -359,26 +359,66 @@ export function useSearchValue(
   query: string,
   setSearchQuery: Dispatch<StateUpdater<string>>,
   setDebouncedSearchQuery: Dispatch<StateUpdater<string>>,
-  setIsSearching: Dispatch<StateUpdater<boolean>>
+  setIsSearching: Dispatch<StateUpdater<boolean>>,
+  statusFilter: 'all' | 'pending' | 'in-progress' | 'done',
+  setStatusFilter: (filter: 'all' | 'pending' | 'in-progress' | 'done') => void,
+  projectFilters: Set<string>,
+  setProjectFilters: (projects: Set<string>) => void
 ) {
+  
   return useMemo<SearchContextProps>(() => {
     query = query.trim().toLocaleLowerCase();
+    const doneChar = getTaskStatusDone();
 
     const lanes = new Set<Lane>();
     const items = new Set<Item>();
 
-    if (query) {
-      board.children.forEach((lane) => {
-        let laneMatched = false;
-        lane.children.forEach((item) => {
-          if (item.data.titleSearch.includes(query)) {
-            laneMatched = true;
-            items.add(item);
+    // 过滤逻辑
+    board.children.forEach((lane) => {
+      let laneMatched = false;
+      
+      // 项目过滤：检查当前lane是否在选中的项目中
+      // 注意：如果board数据已经被预过滤（比如在项目视图模式下），则跳过此过滤
+      let matchesProject = true;
+      if (projectFilters.size > 0 && !lane.id.startsWith('filtered-')) {
+        matchesProject = projectFilters.has(lane.data.title);
+      }
+      
+      if (!matchesProject) return;
+      
+      lane.children.forEach((item) => {
+        // 文本搜索过滤
+        let matchesQuery = !query || item.data.titleSearch.includes(query);
+        
+        // 状态过滤
+        let matchesStatus = true;
+        if (statusFilter !== 'all') {
+          if (statusFilter === 'pending') {
+            matchesStatus = item.data.checkChar === ' ';
+          } else if (statusFilter === 'in-progress') {
+            matchesStatus = item.data.checkChar === '/';
+          } else if (statusFilter === 'done') {
+            matchesStatus = item.data.checkChar === doneChar;
           }
-        });
-        if (laneMatched) lanes.add(lane);
+        }
+        
+        if (matchesQuery && matchesStatus) {
+          laneMatched = true;
+          items.add(item);
+        }
       });
-    }
+      if (laneMatched) lanes.add(lane);
+    });
+
+    const toggleProjectFilter = (project: string) => {
+      const newFilters = new Set();
+      if (!projectFilters.has(project)) {
+        // 如果当前项目没有被选中，则选中它（单选模式）
+        newFilters.add(project);
+      }
+      // 如果当前项目已经被选中，则取消选中（清空选择）
+      setProjectFilters(newFilters);
+    };
 
     return {
       lanes,
@@ -398,6 +438,11 @@ export function useSearchValue(
           setSearchQuery(query);
         }
       },
+      statusFilter,
+      setStatusFilter,
+      projectFilters,
+      setProjectFilters,
+      toggleProjectFilter,
     };
-  }, [board, query, setSearchQuery, setDebouncedSearchQuery]);
+  }, [board, query, statusFilter, projectFilters]);
 }

@@ -107,6 +107,7 @@ export function genericWrappedFromMarkdown(
       {
         type: name,
         value: null,
+        children: [], // 确保节点有 children 属性，避免 visit 函数访问 undefined.length
       },
       token
     );
@@ -118,8 +119,36 @@ export function genericWrappedFromMarkdown(
 
     (current as any).value = target;
 
+    // 确保当前节点和整个 stack 中的所有节点都有 children 属性
+    // 避免 process 回调中调用 visit 时出错
+    if (this.stack && Array.isArray(this.stack)) {
+      for (const node of this.stack) {
+        if (node && typeof node === 'object') {
+          if (!('children' in node)) {
+            node.children = [];
+          } else if (node.children === undefined || node.children === null) {
+            node.children = [];
+          }
+        }
+      }
+    }
+
+    // 确保当前节点有 children 属性
+    if (current && typeof current === 'object') {
+      if (!('children' in current)) {
+        current.children = [];
+      } else if (current.children === undefined || current.children === null) {
+        current.children = [];
+      }
+    }
+
     if (process) {
-      process(target, current);
+      try {
+        process(target, current);
+      } catch (error) {
+        console.error(`❌ [DEBUG] genericWrappedFromMarkdown process callback error for ${name}:`, error);
+        // 不重新抛出错误，避免中断解析过程
+      }
     }
   }
 

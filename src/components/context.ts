@@ -20,6 +20,13 @@ export interface SearchContextProps {
   items: Set<Item>;
   lanes: Set<Lane>;
   search: (query: string, immediate?: boolean) => void;
+  // 状态过滤：'all' | 'pending' | 'in-progress' | 'done'
+  statusFilter: 'all' | 'pending' | 'in-progress' | 'done';
+  setStatusFilter: (filter: 'all' | 'pending' | 'in-progress' | 'done') => void;
+  // 项目过滤：项目标签数组，空数组表示显示所有项目
+  projectFilters: Set<string>;
+  setProjectFilters: (projects: Set<string>) => void;
+  toggleProjectFilter: (project: string) => void;
 }
 
 export const SearchContext = createContext<SearchContextProps | null>(null);

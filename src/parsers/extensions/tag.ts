@@ -89,6 +89,7 @@ export function tagFromMarkdown(): FromMarkdownExtension {
       {
         type: name,
         value: null,
+        children: [], // 确保节点有 children 属性，避免 visit 函数访问 undefined.length
       },
       token
     );
