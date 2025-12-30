@@ -13,9 +13,12 @@ import { t } from 'src/lang/helpers';
 
 import { DndScope } from '../dnd/components/Scope';
 import { getBoardModifiers } from '../helpers/boardModifiers';
+import { getProjectBoardModifiers } from '../helpers/projectBoardModifiers';
 import { frontmatterKey } from '../parsers/common';
 import { getTaskStatusDone } from '../parsers/helpers/inlineMetadata';
 import { Path } from '../dnd/types';
+import { ProjectStateManager } from '../ProjectStateManager';
+import { ProjectKanbanView } from '../ProjectKanbanView';
 import { FilterToolbar } from './FilterToolbar';
 import { Icon } from './Icon/Icon';
 import { Lanes } from './Lane/Lane';
@@ -23,14 +26,14 @@ import { LaneForm } from './Lane/LaneForm';
 import { TableView } from './Table/Table';
 import { KanbanContext, SearchContext } from './context';
 import { baseClassName, c, useSearchValue } from './helpers';
-import { DataTypes, Item, Lane, LaneTemplate } from './types';
+import { BoardTemplate, DataTypes, Item, Lane, LaneTemplate } from './types';
 
 const boardScrollTiggers = [DataTypes.Item, DataTypes.Lane];
 const boardAccepts = [DataTypes.Lane];
 
 interface KanbanProps {
-  stateManager: StateManager;
-  view: KanbanView;
+  stateManager: StateManager | ProjectStateManager;
+  view: KanbanView | ProjectKanbanView;
 }
 
 function getCSSClass(frontmatter: Record<string, any>): string[] {
@@ -51,6 +54,12 @@ function getCSSClass(frontmatter: Record<string, any>): string[] {
 
 export const Kanban = ({ view, stateManager }: KanbanProps) => {
   const boardData = stateManager.useState();
+  console.log('🔍 [DEBUG] Kanban: boardData', {
+    boardData: !!boardData,
+    boardDataId: boardData?.id,
+    boardDataChildren: boardData?.children?.length || 0,
+    boardDataChildrenArray: Array.isArray(boardData?.children),
+  });
   const isAnythingDragging = useIsAnythingDragging();
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -174,7 +183,32 @@ export const Kanban = ({ view, stateManager }: KanbanProps) => {
 
   // 当有项目筛选时，重新组织数据为状态列
   const getFilteredBoardData = useMemo(() => {
+    console.log('🔍 [DEBUG] Kanban: getFilteredBoardData', {
+      boardData: !!boardData,
+      boardDataChildren: boardData?.children?.length || 0,
+      projectFiltersSize: projectFilters.size,
+    });
+    
+    if (!boardData) {
+      console.warn('⚠️ [DEBUG] Kanban: boardData 是 undefined/null');
+      return {
+        ...BoardTemplate,
+        id: 'empty-board',
+        children: [],
+        data: {
+          archive: [],
+          settings: { [frontmatterKey]: 'board' },
+          frontmatter: {},
+          isSearching: false,
+          errors: [],
+        },
+      };
+    }
+    
     if (projectFilters.size === 0) {
+      console.log('🔍 [DEBUG] Kanban: 返回原始 boardData', {
+        childrenLength: boardData.children?.length || 0,
+      });
       return boardData;
     }
 
@@ -239,7 +273,15 @@ export const Kanban = ({ view, stateManager }: KanbanProps) => {
   }, [boardData, projectFilters, doneChar]);
 
   const boardModifiers = useMemo(() => {
-    const baseModifiers = getBoardModifiers(view, stateManager);
+    // 检查是否是项目视图
+    const isProjectView = view instanceof ProjectKanbanView;
+    
+    if (isProjectView) {
+      // 项目视图使用项目专用的 modifiers
+      return getProjectBoardModifiers(view, stateManager as any);
+    }
+    
+    const baseModifiers = getBoardModifiers(view as any, stateManager);
 
     // 如果有项目筛选，创建包装的modifiers来处理路径映射
     if (projectFilters.size > 0) {

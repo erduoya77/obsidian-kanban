@@ -13,6 +13,7 @@ import { render, unmountComponentAtNode, useEffect, useState } from 'preact/comp
 
 import { createApp } from './DragDropApp';
 import { KanbanView, kanbanIcon, kanbanViewType } from './KanbanView';
+import { ProjectKanbanView, projectKanbanIcon, projectKanbanViewType } from './ProjectKanbanView';
 import { KanbanSettings, KanbanSettingsTab } from './Settings';
 import { StateManager } from './StateManager';
 import { DateSuggest, TimeSuggest } from './components/Editor/suggest';
@@ -69,12 +70,8 @@ export default class KanbanPlugin extends Plugin {
 
   unload(): void {
     super.unload();
-    Promise.all(
-      this.app.workspace.getLeavesOfType(kanbanViewType).map((leaf) => {
-        this.kanbanFileModes[(leaf as any).id] = 'markdown';
-        return this.setMarkdownView(leaf);
-      })
-    );
+    // 不再需要处理单文件看板视图的卸载
+    // 项目看板视图会自动清理
   }
 
   onunload() {
@@ -129,7 +126,8 @@ export default class KanbanPlugin extends Plugin {
 
     this.addSettingTab(this.settingsTab);
 
-    this.registerView(kanbanViewType, (leaf) => new KanbanView(leaf, this));
+    // 只注册项目看板视图，不再注册单文件看板视图
+    this.registerView(projectKanbanViewType, (leaf) => new ProjectKanbanView(leaf, this));
     this.registerMonkeyPatches();
     this.registerCommands();
     this.registerEvents();
@@ -144,8 +142,9 @@ export default class KanbanPlugin extends Plugin {
     this.registerDomEvent(window, 'keydown', this.handleShift);
     this.registerDomEvent(window, 'keyup', this.handleShift);
 
-    this.addRibbonIcon(kanbanIcon, t('Create new board'), () => {
-      this.newKanban();
+    // 只保留一个 ribbon 图标，用于打开项目看板视图
+    this.addRibbonIcon(kanbanIcon, t('Open projects kanban'), () => {
+      this.openProjectKanban();
     });
   }
 
@@ -328,33 +327,55 @@ export default class KanbanPlugin extends Plugin {
     );
   }
 
-  async setKanbanView(leaf: WorkspaceLeaf) {
-    await leaf.setViewState({
-      type: kanbanViewType,
-      state: leaf.view.getState(),
-      popstate: true,
-    } as ViewState);
-  }
+  // 不再需要 setKanbanView，因为只使用项目看板视图
+  // async setKanbanView(leaf: WorkspaceLeaf) {
+  //   await leaf.setViewState({
+  //     type: kanbanViewType,
+  //     state: leaf.view.getState(),
+  //     popstate: true,
+  //   } as ViewState);
+  // }
 
-  async newKanban(folder?: TFolder) {
+  /**
+   * 创建新的项目看板文件（包含 project frontmatter）
+   */
+  async newProjectKanban(folder?: TFolder) {
     const targetFolder = folder
       ? folder
-      : this.app.fileManager.getNewFileParent(app.workspace.getActiveFile()?.path || '');
+      : this.app.fileManager.getNewFileParent(this.app.workspace.getActiveFile()?.path || '');
 
     try {
-      const kanban: TFile = await (app.fileManager as any).createNewMarkdownFile(
+      const projectFile: TFile = await (this.app.fileManager as any).createNewMarkdownFile(
         targetFolder,
-        t('Untitled Kanban')
+        'Untitled Project'
       );
 
-      await this.app.vault.modify(kanban, basicFrontmatter);
-      await this.app.workspace.getLeaf().setViewState({
-        type: kanbanViewType,
-        state: { file: kanban.path },
-      });
+      // 创建包含 project 标记的 frontmatter
+      const projectFrontmatter = [
+        '---',
+        '',
+        'project: true',
+        `${frontmatterKey}: board`,
+        '',
+        '---',
+        '',
+        '',
+      ].join('\n');
+
+      await this.app.vault.modify(projectFile, projectFrontmatter);
+      
+      // 打开项目看板视图（会自动扫描并显示新文件）
+      await this.openProjectKanban();
     } catch (e) {
-      console.error('Error creating kanban board:', e);
+      console.error('Error creating project kanban board:', e);
     }
+  }
+
+  /**
+   * 保留原有方法用于向后兼容，但改为创建项目文件
+   */
+  async newKanban(folder?: TFolder) {
+    return this.newProjectKanban(folder);
   }
 
   registerEvents() {
@@ -367,167 +388,51 @@ export default class KanbanPlugin extends Plugin {
         const leafIsMarkdown = leaf?.view instanceof MarkdownView;
         const leafIsKanban = leaf?.view instanceof KanbanView;
 
-        // Add a menu item to the folder context menu to create a board
+        // Add a menu item to the folder context menu to create a project board
         if (fileIsFolder) {
           menu.addItem((item) => {
             item
               .setSection('action-primary')
-              .setTitle(t('New kanban board'))
+              .setTitle(t('New project board'))
               .setIcon(kanbanIcon)
-              .onClick(() => this.newKanban(file));
+              .onClick(() => this.newProjectKanban(file));
           });
           return;
         }
 
+        // 移除了单文件看板相关的菜单项，只支持项目看板视图
+        // 如果文件包含 project frontmatter，可以提示用户打开项目看板视图
         if (
-          !Platform.isMobile &&
           fileIsFile &&
           leaf &&
-          source === 'sidebar-context-menu' &&
-          hasFrontmatterKey(file)
+          source === 'sidebar-context-menu'
         ) {
-          const views = this.getKanbanViews(getParentWindow(leaf.view.containerEl));
-          let haveKanbanView = false;
-
-          for (const view of views) {
-            if (view.file === file) {
-              view.onPaneMenu(menu, 'more-options', false);
-              haveKanbanView = true;
-              break;
-            }
-          }
-
-          if (!haveKanbanView) {
+          const cache = this.app.metadataCache.getFileCache(file);
+          if (cache?.frontmatter && cache.frontmatter['project']) {
             menu.addItem((item) => {
               item
-                .setTitle(t('Open as kanban board'))
+                .setTitle(t('Open projects kanban'))
                 .setIcon(kanbanIcon)
                 .setSection('pane')
                 .onClick(() => {
-                  this.kanbanFileModes[(leaf as any).id || file.path] = kanbanViewType;
-                  this.setKanbanView(leaf);
-                });
-            });
-
-            return;
-          }
-        }
-
-        if (
-          leafIsMarkdown &&
-          fileIsFile &&
-          ['more-options', 'pane-more-options', 'tab-header'].includes(source) &&
-          hasFrontmatterKey(file)
-        ) {
-          menu.addItem((item) => {
-            item
-              .setTitle(t('Open as kanban board'))
-              .setIcon(kanbanIcon)
-              .setSection('pane')
-              .onClick(() => {
-                this.kanbanFileModes[(leaf as any).id || file.path] = kanbanViewType;
-                this.setKanbanView(leaf);
-              });
-          });
-        }
-
-        if (fileIsFile && leafIsKanban) {
-          if (['pane-more-options', 'tab-header'].includes(source)) {
-            menu.addItem((item) => {
-              item
-                .setTitle(t('Open as markdown'))
-                .setIcon(kanbanIcon)
-                .setSection('pane')
-                .onClick(() => {
-                  this.kanbanFileModes[(leaf as any).id || file.path] = 'markdown';
-                  this.setMarkdownView(leaf);
+                  this.openProjectKanban();
                 });
             });
           }
-
-          if (Platform.isMobile) {
-            const stateManager = this.stateManagers.get(file);
-            const kanbanView = leaf.view as KanbanView;
-            const boardView =
-              kanbanView.viewSettings[frontmatterKey] || stateManager.getSetting(frontmatterKey);
-
-            menu
-              .addItem((item) => {
-                item
-                  .setTitle(t('Add a list'))
-                  .setIcon('lucide-plus-circle')
-                  .setSection('pane')
-                  .onClick(() => {
-                    kanbanView.emitter.emit('showLaneForm', undefined);
-                  });
-              })
-              .addItem((item) => {
-                item
-                  .setTitle(t('Archive completed cards'))
-                  .setIcon('lucide-archive')
-                  .setSection('pane')
-                  .onClick(() => {
-                    stateManager.archiveCompletedCards();
-                  });
-              })
-              .addItem((item) => {
-                item
-                  .setTitle(t('Archive completed cards'))
-                  .setIcon('lucide-archive')
-                  .setSection('pane')
-                  .onClick(() => {
-                    const stateManager = this.stateManagers.get(file);
-                    stateManager.archiveCompletedCards();
-                  });
-              })
-              .addItem((item) =>
-                item
-                  .setTitle(t('View as board'))
-                  .setSection('pane')
-                  .setIcon('lucide-trello')
-                  .setChecked(boardView === 'basic' || boardView === 'board')
-                  .onClick(() => kanbanView.setView('board'))
-              )
-              .addItem((item) =>
-                item
-                  .setTitle(t('View as table'))
-                  .setSection('pane')
-                  .setIcon('lucide-table')
-                  .setChecked(boardView === 'table')
-                  .onClick(() => kanbanView.setView('table'))
-              )
-              .addItem((item) =>
-                item
-                  .setTitle(t('View as list'))
-                  .setSection('pane')
-                  .setIcon('lucide-server')
-                  .setChecked(boardView === 'list')
-                  .onClick(() => kanbanView.setView('list'))
-              )
-              .addItem((item) =>
-                item
-                  .setTitle(t('Open board settings'))
-                  .setSection('pane')
-                  .setIcon('lucide-settings')
-                  .onClick(() => kanbanView.getBoardSettings())
-              );
-          }
         }
+
+        // 移除了单文件看板的菜单处理
+        // 项目看板视图的菜单在 ProjectKanbanView.onPaneMenu 中处理
       })
     );
 
-    this.registerEvent(
-      app.vault.on('rename', (file, oldPath) => {
-        const kanbanLeaves = app.workspace.getLeavesOfType(kanbanViewType);
-
-        kanbanLeaves.forEach((leaf) => {
-          (leaf.view as KanbanView).handleRename(file.path, oldPath);
-        });
-      })
-    );
+    // 移除了单文件看板的文件重命名处理
+    // 项目看板视图会在 ProjectStateManager 中处理文件变化
 
     const notifyFileChange = debounce(
       (file: TFile) => {
+        // 项目看板视图的文件变化处理在 ProjectStateManager 中
+        // 这里保留用于向后兼容（如果有单文件看板视图打开）
         this.stateManagers.forEach((manager) => {
           if (manager.file !== file) {
             manager.onFileMetadataChange();
@@ -539,7 +444,7 @@ export default class KanbanPlugin extends Plugin {
     );
 
     this.registerEvent(
-      app.vault.on('modify', (file) => {
+      this.app.vault.on('modify', (file: TFile) => {
         if (file instanceof TFile) {
           notifyFileChange(file);
         }
@@ -547,218 +452,78 @@ export default class KanbanPlugin extends Plugin {
     );
 
     this.registerEvent(
-      app.metadataCache.on('changed', (file) => {
+      this.app.metadataCache.on('changed', (file: TFile) => {
         notifyFileChange(file);
       })
     );
 
     this.registerEvent(
-      (app as any).metadataCache.on('dataview:metadata-change', (_: any, file: TFile) => {
+      (this.app as any).metadataCache.on('dataview:metadata-change', (_: any, file: TFile) => {
         notifyFileChange(file);
       })
     );
 
     this.registerEvent(
-      (app as any).metadataCache.on('dataview:api-ready', () => {
+      (this.app as any).metadataCache.on('dataview:api-ready', () => {
         this.stateManagers.forEach((manager) => {
           manager.forceRefresh();
         });
       })
     );
 
-    (app.workspace as any).registerHoverLinkSource(frontmatterKey, {
+    (this.app.workspace as any).registerHoverLinkSource(frontmatterKey, {
       display: 'Kanban',
       defaultMod: true,
     });
   }
 
+  async openProjectKanban() {
+    const leaf = this.app.workspace.getLeaf();
+    await leaf.setViewState({
+      type: projectKanbanViewType,
+    });
+  }
+
   registerCommands() {
+    // 主要命令：打开项目看板视图
+    this.addCommand({
+      id: 'open-project-kanban',
+      name: t('Open projects kanban'),
+      callback: () => this.openProjectKanban(),
+    });
+
+    // 创建新项目看板文件
     this.addCommand({
       id: 'create-new-kanban-board',
-      name: t('Create new board'),
-      callback: () => this.newKanban(),
+      name: t('Create new project board'),
+      callback: () => this.newProjectKanban(),
     });
 
-    this.addCommand({
-      id: 'archive-completed-cards',
-      name: t('Archive completed cards in active board'),
-      checkCallback: (checking) => {
-        const activeView = app.workspace.getActiveViewOfType(KanbanView);
-
-        if (!activeView) return false;
-        if (checking) return true;
-
-        this.stateManagers.get(activeView.file).archiveCompletedCards();
-      },
-    });
-
-    this.addCommand({
-      id: 'toggle-kanban-view',
-      name: t('Toggle between Kanban and markdown mode'),
-      checkCallback: (checking) => {
-        const activeFile = app.workspace.getActiveFile();
-
-        if (!activeFile) return false;
-
-        const fileCache = app.metadataCache.getFileCache(activeFile);
-        const fileIsKanban = !!fileCache?.frontmatter && !!fileCache.frontmatter[frontmatterKey];
-
-        if (checking) {
-          return fileIsKanban;
-        }
-
-        const activeView = app.workspace.getActiveViewOfType(KanbanView);
-
-        if (activeView) {
-          this.kanbanFileModes[(activeView.leaf as any).id || activeFile.path] = 'markdown';
-          this.setMarkdownView(activeView.leaf);
-        } else if (fileIsKanban) {
-          const activeView = app.workspace.getActiveViewOfType(MarkdownView);
-
-          if (activeView) {
-            this.kanbanFileModes[(activeView.leaf as any).id || activeFile.path] = kanbanViewType;
-            this.setKanbanView(activeView.leaf);
-          }
-        }
-      },
-    });
-
-    this.addCommand({
-      id: 'convert-to-kanban',
-      name: t('Convert empty note to Kanban'),
-      checkCallback: (checking) => {
-        const activeView = app.workspace.getActiveViewOfType(MarkdownView);
-
-        if (!activeView) return false;
-
-        const isFileEmpty = activeView.file.stat.size === 0;
-
-        if (checking) return isFileEmpty;
-        if (isFileEmpty) {
-          app.vault
-            .modify(activeView.file, basicFrontmatter)
-            .then(() => {
-              this.setKanbanView(activeView.leaf);
-            })
-            .catch((e) => console.error(e));
-        }
-      },
-    });
-
-    this.addCommand({
-      id: 'add-kanban-lane',
-      name: t('Add a list'),
-      checkCallback: (checking) => {
-        const view = app.workspace.getActiveViewOfType(KanbanView);
-
-        if (checking) {
-          return view && view instanceof KanbanView;
-        }
-
-        if (view && view instanceof KanbanView) {
-          view.emitter.emit('showLaneForm', undefined);
-        }
-      },
-    });
-
-    this.addCommand({
-      id: 'view-board',
-      name: t('View as board'),
-      checkCallback: (checking) => {
-        const view = app.workspace.getActiveViewOfType(KanbanView);
-
-        if (checking) {
-          return view && view instanceof KanbanView;
-        }
-
-        if (view && view instanceof KanbanView) {
-          view.setView('board');
-        }
-      },
-    });
-
-    this.addCommand({
-      id: 'view-table',
-      name: t('View as table'),
-      checkCallback: (checking) => {
-        const view = app.workspace.getActiveViewOfType(KanbanView);
-
-        if (checking) {
-          return view && view instanceof KanbanView;
-        }
-
-        if (view && view instanceof KanbanView) {
-          view.setView('table');
-        }
-      },
-    });
-
-    this.addCommand({
-      id: 'view-list',
-      name: t('View as list'),
-      checkCallback: (checking) => {
-        const view = app.workspace.getActiveViewOfType(KanbanView);
-
-        if (checking) {
-          return view && view instanceof KanbanView;
-        }
-
-        if (view && view instanceof KanbanView) {
-          view.setView('list');
-        }
-      },
-    });
-
-    this.addCommand({
-      id: 'open-board-settings',
-      name: t('Open board settings'),
-      checkCallback: (checking) => {
-        const view = app.workspace.getActiveViewOfType(KanbanView);
-
-        if (!view) return false;
-        if (checking) return true;
-
-        view.getBoardSettings();
-      },
-    });
+    // 移除了所有单文件看板相关的命令，只保留项目看板视图的命令
+    // 如果需要，可以为项目看板视图添加相应的命令
   }
 
   registerMonkeyPatches() {
     const self = this;
 
-    this.app.workspace.onLayoutReady(() => {
-      this.register(
-        around((app as any).commands, {
-          executeCommand(next) {
-            return function (command: any) {
-              const view = app.workspace.getActiveViewOfType(KanbanView);
+    // 移除了单文件看板的命令拦截，项目看板视图不需要
 
-              if (view && command?.id) {
-                view.emitter.emit('hotkey', { commandId: command.id });
-              }
-
-              return next.call(this, command);
-            };
-          },
-        })
-      );
-    });
-
-    this.register(
-      around(this.app.workspace, {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        setActiveLeaf(next) {
-          return function (...args) {
-            next.apply(this, args);
-            const view = this.getActiveViewOfType(KanbanView);
-            if (view?.activeEditor) {
-              this.activeEditor = view.activeEditor;
-            }
-          };
-        },
-      })
-    );
+    // 移除了单文件看板的 activeEditor 设置
+    // this.register(
+    //   around(this.app.workspace, {
+    //     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    //     // @ts-ignore
+    //     setActiveLeaf(next) {
+    //       return function (...args) {
+    //         next.apply(this, args);
+    //         const view = this.getActiveViewOfType(KanbanView);
+    //         if (view?.activeEditor) {
+    //           this.activeEditor = view.activeEditor;
+    //         }
+    //       };
+    //     },
+    //   })
+    // );
 
     // Monkey patch WorkspaceLeaf to open Kanbans with KanbanView by default
     this.register(
@@ -779,31 +544,8 @@ export default class KanbanPlugin extends Plugin {
 
         setViewState(next) {
           return function (state: ViewState, ...rest: any[]) {
-            if (
-              // Don't force kanban mode during shutdown
-              self._loaded &&
-              // If we have a markdown file
-              state.type === 'markdown' &&
-              state.state?.file &&
-              // And the current mode of the file is not set to markdown
-              self.kanbanFileModes[this.id || state.state.file] !== 'markdown'
-            ) {
-              // Then check for the kanban frontMatterKey
-              const cache = self.app.metadataCache.getCache(state.state.file);
-
-              if (cache?.frontmatter && cache.frontmatter[frontmatterKey]) {
-                // If we have it, force the view type to kanban
-                const newState = {
-                  ...state,
-                  type: kanbanViewType,
-                };
-
-                self.kanbanFileModes[state.state.file] = kanbanViewType;
-
-                return next.apply(this, [newState, ...rest]);
-              }
-            }
-
+            // 不再自动打开单文件看板视图，只支持项目聚合视图
+            // 保留此方法以支持手动打开旧格式的看板文件（如果需要）
             return next.apply(this, [state, ...rest]);
           };
         },
