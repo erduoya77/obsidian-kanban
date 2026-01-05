@@ -254,23 +254,15 @@ export const Kanban = ({ view, stateManager }: KanbanProps) => {
             // 根据filtered lane的ID找到对应的状态
             const filteredLane = getFilteredBoardData.children[filteredLaneIndex];
             if (filteredLane && filteredLane.id.startsWith('filtered-')) {
-              const statusType = filteredLane.id.replace('filtered-', '');
-              const statusChar = statusType === 'pending' ? ' ' : statusType === 'in-progress' ? '/' : doneChar;
-
-              // 找到原始项目中对应的item，并更新其状态
+              // 找到原始项目中对应的item，并使用传入的item状态（而不是根据filtered lane推断）
               let found = false;
               boardData.children.forEach((originalLane, laneIdx) => {
                 if (projectFilters.has(originalLane.data.title)) {
                   originalLane.children.forEach((originalItem, itemIdx) => {
                     if (originalItem.id === item.id) {
-                      // 更新原始item的状态
-                      const updatedItem = update(originalItem, {
-                        data: {
-                          checkChar: { $set: statusChar },
-                          checked: { $set: statusChar === doneChar }
-                        }
-                      });
-                      baseModifiers.updateItem([laneIdx, itemIdx], updatedItem);
+                      // 直接使用传入的item状态，而不是根据filtered lane推断
+                      // 这样状态切换才能正常工作
+                      baseModifiers.updateItem([laneIdx, itemIdx], item);
                       found = true;
                     }
                   });
